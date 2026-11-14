@@ -2,7 +2,7 @@ import math
 
 import numpy as np
 
-from .periodicity import MAX_FREQUENCY_COUNT, rayleigh_scan
+from .periodicity import MAX_FREQUENCY_COUNT, empirical_cluster_test, rayleigh_scan
 
 
 MAX_VALIDATION_PHASE_EVALUATIONS = 100_000_000
@@ -29,6 +29,9 @@ def validate_periodicity(
     frequency_count: int = 256,
     alpha: float = 0.01,
     cluster_width_seconds: float = 0.5,
+    calibration_method: str = "analytic",
+    cluster_gap_seconds: float = 1.5,
+    surrogate_count: int = 99,
     groups_per_host_day: float | None = None,
     seed: int = 42,
 ) -> dict:
@@ -48,13 +51,20 @@ def validate_periodicity(
         raise ValueError("alpha must be between 0 and 1")
     if not math.isfinite(cluster_width_seconds) or cluster_width_seconds <= 0:
         raise ValueError("cluster_width_seconds must be finite and positive")
+    if calibration_method not in {"analytic", "cluster_empirical"}:
+        raise ValueError("calibration_method must be 'analytic' or 'cluster_empirical'")
+    if not math.isfinite(cluster_gap_seconds) or cluster_gap_seconds <= 0:
+        raise ValueError("cluster_gap_seconds must be finite and positive")
+    if type(surrogate_count) is not int or not 20 <= surrogate_count <= 10_000:
+        raise ValueError("surrogate_count must be between 20 and 10000")
     if groups_per_host_day is not None and (
         not math.isfinite(groups_per_host_day) or groups_per_host_day < 0
     ):
         raise ValueError("groups_per_host_day must be finite and nonnegative")
     if type(seed) is not int:
         raise ValueError("seed must be an integer")
-    estimated_work = trials * event_count * frequency_count * 3
+    surrogate_multiplier = surrogate_count + 1 if calibration_method == "cluster_empirical" else 1
+    estimated_work = trials * event_count * frequency_count * 3 * surrogate_multiplier
     if estimated_work > MAX_VALIDATION_PHASE_EVALUATIONS:
         raise ValueError(
             "validation exceeds the work limit; reduce trials, events, or frequency_count"
@@ -66,12 +76,24 @@ def validate_periodicity(
     periodic_detections = 0
     cluster_count = max(2, event_count // 4)
 
-    for _ in range(trials):
+    def p_value_for(times, trial_index):
+        if calibration_method == "cluster_empirical":
+            result = empirical_cluster_test(
+                times,
+                min_period,
+                max_period,
+                frequency_count=frequency_count,
+                cluster_gap_seconds=cluster_gap_seconds,
+                surrogate_count=surrogate_count,
+                seed=seed + trial_index,
+            )
+            return result.p_value if result is not None else 1.0
+        result = rayleigh_scan(times, min_period, max_period, frequency_count)
+        return result.scan_adjusted_p_value if result is not None else 1.0
+
+    for trial_index in range(trials):
         uniform_times = rng.uniform(0.0, duration_seconds, event_count)
-        uniform_result = rayleigh_scan(
-            uniform_times, min_period, max_period, frequency_count
-        )
-        if uniform_result is not None and uniform_result.scan_adjusted_p_value <= alpha:
+        if p_value_for(uniform_times, 3 * trial_index) <= alpha:
             uniform_false_positives += 1
 
         centers = rng.uniform(0.0, duration_seconds, cluster_count)
@@ -79,19 +101,13 @@ def validate_periodicity(
             rng.choice(centers, event_count)
             + rng.normal(0.0, cluster_width_seconds, event_count)
         ) % duration_seconds
-        bursty_result = rayleigh_scan(
-            bursty_times, min_period, max_period, frequency_count
-        )
-        if bursty_result is not None and bursty_result.scan_adjusted_p_value <= alpha:
+        if p_value_for(bursty_times, 3 * trial_index + 1) <= alpha:
             bursty_false_positives += 1
 
         period = rng.uniform(min_period, max_period)
         phase = rng.uniform(0.0, period)
         periodic_times = phase + period * np.arange(event_count, dtype=np.float64)
-        periodic_result = rayleigh_scan(
-            periodic_times, min_period, max_period, frequency_count
-        )
-        if periodic_result is not None and periodic_result.scan_adjusted_p_value <= alpha:
+        if p_value_for(periodic_times, 3 * trial_index + 2) <= alpha:
             periodic_detections += 1
 
     mc_tolerance = 3.0 * math.sqrt(alpha * (1.0 - alpha) / trials)
@@ -120,7 +136,7 @@ def validate_periodicity(
     return {
         "validation_version": 1,
         "status": "passed" if passed else "failed",
-        "method": "analytic Rayleigh approximation with frequency-scan Bonferroni correction",
+        "method": calibration_method,
         "synthetic_only": True,
         "configuration": {
             "trials": trials,
@@ -132,6 +148,8 @@ def validate_periodicity(
             "alpha": alpha,
             "cluster_count": cluster_count,
             "cluster_width_seconds": cluster_width_seconds,
+            "cluster_gap_seconds": cluster_gap_seconds,
+            "surrogate_count": surrogate_count if calibration_method == "cluster_empirical" else 0,
             "groups_per_host_day": groups_per_host_day,
             "seed": seed,
             "monte_carlo_tolerance": mc_tolerance,

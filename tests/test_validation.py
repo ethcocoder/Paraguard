@@ -31,6 +31,26 @@ class ValidationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "work limit"):
             validate_periodicity(trials=1000, event_count=1000, frequency_count=1000)
 
+    def test_cluster_empirical_calibration_controls_bursty_null(self):
+        report = validate_periodicity(
+            trials=40,
+            event_count=20,
+            duration_seconds=600.0,
+            min_period=2.0,
+            max_period=60.0,
+            frequency_count=128,
+            alpha=0.05,
+            cluster_width_seconds=0.5,
+            calibration_method="cluster_empirical",
+            cluster_gap_seconds=1.5,
+            surrogate_count=49,
+            seed=42,
+        )
+
+        self.assertEqual(report["status"], "passed")
+        self.assertLessEqual(report["bursty_null"]["false_positive_rate"], 0.15)
+        self.assertGreaterEqual(report["periodic_positive_control"]["detection_rate"], 0.9)
+
 
 if __name__ == "__main__":
     unittest.main()

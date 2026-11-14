@@ -26,7 +26,11 @@ paraguard scan events.jsonl --min-period 2 --max-period 300 --fdr 0.01 --output 
 
 Use `python -m paraguard scan events.csv` when running from a source checkout. The report includes per-process/channel features, periodicity statistics, adjusted q-values, and plain-language explanations.
 
+For a cluster-preserving empirical null, use `--empirical-surrogates 199 --cluster-gap-seconds 1.5`. This relocates detected event clusters while preserving within-cluster timing, then compares the observed scan maximum with the surrogate maxima. The method is conditional on the gap threshold and exchangeable cluster-placement assumption; it is opt-in and does not replace review against representative benign telemetry.
+
 `--frequency-count` controls the period-grid resolution (default `256`, maximum `100000`). Larger scans can take substantially longer as event volume grows.
+
+Empirical p-value resolution is `1 / (surrogates + 1)`. Because Benjamini-Hochberg correction spans all tested process-channel groups, many groups may require more surrogates to reach the configured FDR. A work guard rejects oversized empirical scans.
 
 ## Limitations
 
@@ -40,10 +44,10 @@ python -m unittest discover -s tests -v
 
 ## Calibrate the periodicity test
 
-Run a deterministic Monte Carlo check of uniform and clustered null events plus a periodic positive control:
+Run a deterministic Monte Carlo check of uniform and clustered null events plus a periodic positive control. The default analytic method is expected to fail on bursty patterns; compare with the cluster-preserving empirical method using a reduced, explicit test budget:
 
 ```powershell
-paraguard validate --trials 500 --alpha 0.01 --groups-per-host-day 1000 --output calibration.json
+paraguard validate --calibration-method cluster_empirical --trials 40 --events 20 --frequency-count 128 --surrogates 49 --alpha 0.05 --groups-per-host-day 1000 --output calibration.json
 ```
 
-The report includes false-positive rates with Wilson 95% intervals and, when `--groups-per-host-day` is supplied, an estimated false-alert count per host-day. That estimate treats the value as the number of process-channel groups tested per host per day; it is an extrapolation, not an observed host metric. This is synthetic validation, not a substitute for benign host telemetry. The current analytic Rayleigh approximation is expected to fail on some bursty event patterns; the command exits nonzero when its null checks fail.
+The report includes false-positive rates with Wilson 95% intervals and, when `--groups-per-host-day` is supplied, an estimated false-alert count per host-day. That estimate treats the value as the number of process-channel groups tested per host per day; it is an extrapolation, not an observed host metric. This is synthetic validation, not a substitute for benign host telemetry. The command exits nonzero when its null checks fail.

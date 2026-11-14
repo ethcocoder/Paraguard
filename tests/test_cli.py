@@ -49,6 +49,8 @@ class CliTests(unittest.TestCase):
                     "6",
                     "--frequency-count",
                     "201",
+                    "--empirical-surrogates",
+                    "199",
                     "--output",
                     str(output_path),
                 ])
@@ -58,6 +60,11 @@ class CliTests(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         self.assertEqual(stdout.getvalue(), "")
         self.assertEqual(len(report["alerts"]), 1)
+        self.assertEqual(
+            report["groups"][0]["periodicity"]["p_value_method"],
+            "cluster-preserving empirical",
+        )
+        self.assertEqual(report["groups"][0]["periodicity"]["minimum_resolvable_p_value"], 0.005)
 
 
 if __name__ == "__main__":

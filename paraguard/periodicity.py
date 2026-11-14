@@ -18,6 +18,14 @@ class PeriodicityResult:
     tested_frequencies: int
 
 
+@dataclass(frozen=True)
+class EmpiricalPeriodicityResult:
+    period_result: PeriodicityResult
+    p_value: float
+    surrogate_count: int
+    cluster_count: int
+
+
 def rayleigh_scan(
     timestamps,
     min_period: float,
@@ -68,6 +76,70 @@ def rayleigh_scan(
         raw_p_value=raw_p_value,
         scan_adjusted_p_value=adjusted_p_value,
         tested_frequencies=int(frequencies.size),
+    )
+
+
+def empirical_cluster_test(
+    timestamps,
+    min_period: float,
+    max_period: float,
+    *,
+    frequency_count: int = 256,
+    cluster_gap_seconds: float = 1.5,
+    surrogate_count: int = 199,
+    seed: int = 42,
+) -> EmpiricalPeriodicityResult | None:
+    if not math.isfinite(cluster_gap_seconds) or cluster_gap_seconds <= 0:
+        raise ValueError("cluster_gap_seconds must be finite and positive")
+    if type(surrogate_count) is not int or not 20 <= surrogate_count <= 10_000:
+        raise ValueError("surrogate_count must be between 20 and 10000")
+    if type(seed) is not int:
+        raise ValueError("seed must be an integer")
+
+    times = np.asarray(timestamps, dtype=np.float64)
+    if times.ndim != 1 or not np.all(np.isfinite(times)):
+        raise ValueError("timestamps must be a one-dimensional finite sequence")
+    if times.size < 4:
+        return None
+    times = np.sort(times)
+    duration = float(times[-1] - times[0])
+    if duration <= 0:
+        return None
+    times = times - times[0]
+    observed = rayleigh_scan(
+        times,
+        min_period=min_period,
+        max_period=max_period,
+        frequency_count=frequency_count,
+    )
+    if observed is None:
+        return None
+
+    split_points = np.flatnonzero(np.diff(times) > cluster_gap_seconds) + 1
+    clusters = np.split(times, split_points)
+    offsets = [cluster - cluster[0] for cluster in clusters]
+    rng = np.random.default_rng(seed)
+    exceedances = 0
+    for _ in range(surrogate_count):
+        starts = rng.uniform(0.0, duration, len(clusters))
+        surrogate = np.concatenate([
+            np.remainder(start + cluster_offsets, duration)
+            for start, cluster_offsets in zip(starts, offsets)
+        ])
+        result = rayleigh_scan(
+            surrogate,
+            min_period=min_period,
+            max_period=max_period,
+            frequency_count=frequency_count,
+        )
+        if result is not None and result.statistic >= observed.statistic:
+            exceedances += 1
+
+    return EmpiricalPeriodicityResult(
+        period_result=observed,
+        p_value=(exceedances + 1) / (surrogate_count + 1),
+        surrogate_count=surrogate_count,
+        cluster_count=len(clusters),
     )
 
 

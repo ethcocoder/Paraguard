@@ -19,6 +19,10 @@ def _build_parser() -> argparse.ArgumentParser:
     scan.add_argument("--max-period", type=float, default=300.0)
     scan.add_argument("--frequency-count", type=int, default=256)
     scan.add_argument("--fdr", type=float, default=0.01)
+    scan.add_argument("--empirical-surrogates", type=int, default=0,
+                      help="use cluster-preserving empirical p-values (0 disables; otherwise at least 20)")
+    scan.add_argument("--cluster-gap-seconds", type=float, default=1.5)
+    scan.add_argument("--seed", type=int, default=42)
     validate = subparsers.add_parser("validate", help="measure periodicity false positives on synthetic nulls")
     validate.add_argument("--trials", type=int, default=500)
     validate.add_argument("--events", type=int, default=32)
@@ -28,6 +32,9 @@ def _build_parser() -> argparse.ArgumentParser:
     validate.add_argument("--frequency-count", type=int, default=256)
     validate.add_argument("--alpha", type=float, default=0.01)
     validate.add_argument("--cluster-width-seconds", type=float, default=0.5)
+    validate.add_argument("--calibration-method", choices=("analytic", "cluster_empirical"), default="analytic")
+    validate.add_argument("--cluster-gap-seconds", type=float, default=1.5)
+    validate.add_argument("--surrogates", type=int, default=99)
     validate.add_argument("--groups-per-host-day", type=float)
     validate.add_argument("--seed", type=int, default=42)
     validate.add_argument("--output", type=Path, help="write the JSON report to this path")
@@ -46,6 +53,9 @@ def main(argv=None) -> int:
                 max_period=args.max_period,
                 frequency_count=args.frequency_count,
                 fdr=args.fdr,
+                empirical_surrogates=args.empirical_surrogates,
+                cluster_gap_seconds=args.cluster_gap_seconds,
+                random_seed=args.seed,
             )
         else:
             report = validate_periodicity(
@@ -57,6 +67,9 @@ def main(argv=None) -> int:
                 frequency_count=args.frequency_count,
                 alpha=args.alpha,
                 cluster_width_seconds=args.cluster_width_seconds,
+                calibration_method=args.calibration_method,
+                cluster_gap_seconds=args.cluster_gap_seconds,
+                surrogate_count=args.surrogates,
                 groups_per_host_day=args.groups_per_host_day,
                 seed=args.seed,
             )
