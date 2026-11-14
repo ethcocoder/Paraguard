@@ -1,6 +1,8 @@
 import unittest
 
 from paraguard.validation import validate_periodicity
+from paraguard.models import Event
+from paraguard.validation import validate_benign_events
 
 
 class ValidationTests(unittest.TestCase):
@@ -26,6 +28,32 @@ class ValidationTests(unittest.TestCase):
     def test_validation_rejects_small_trial_count(self):
         with self.assertRaisesRegex(ValueError, "between 20 and 100000"):
             validate_periodicity(trials=19)
+
+    def test_benign_log_validation_uses_chronological_holdout(self):
+        events = [
+            Event(float(timestamp), f"process-{group}", "network")
+            for group in range(3)
+            for timestamp in range(0, 200, 5)
+        ]
+        arguments = {
+            "candidate_gaps": (0.5, 1.5),
+            "train_fraction": 0.6,
+            "min_period": 2.0,
+            "max_period": 60.0,
+            "frequency_count": 64,
+            "surrogate_count": 39,
+            "fdr": 0.05,
+            "seed": 13,
+        }
+
+        first = validate_benign_events(events, **arguments)
+        second = validate_benign_events(events, **arguments)
+
+        self.assertEqual(first["group_counts"]["evaluated_groups"], 3)
+        self.assertEqual(first["split_event_counts"], {"training": 72, "heldout": 48})
+        self.assertEqual(first["configuration"]["selected_cluster_gap_seconds"],
+                         second["configuration"]["selected_cluster_gap_seconds"])
+        self.assertEqual(first["heldout"]["group_count"], 3)
 
     def test_validation_rejects_excessive_work(self):
         with self.assertRaisesRegex(ValueError, "work limit"):

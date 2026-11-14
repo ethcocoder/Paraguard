@@ -5,7 +5,7 @@ import sys
 
 from .analysis import analyze_events
 from .io import read_events
-from .validation import validate_periodicity
+from .validation import validate_benign_events, validate_periodicity
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -38,6 +38,20 @@ def _build_parser() -> argparse.ArgumentParser:
     validate.add_argument("--groups-per-host-day", type=float)
     validate.add_argument("--seed", type=int, default=42)
     validate.add_argument("--output", type=Path, help="write the JSON report to this path")
+    validate_log = subparsers.add_parser(
+        "validate-log", help="tune the cluster gap on training data and evaluate held-out benign logs"
+    )
+    validate_log.add_argument("input", type=Path, help="benign .csv, .jsonl, or .ndjson event file")
+    validate_log.add_argument("--candidate-gaps", type=float, nargs="+", default=[0.5, 1.0, 1.5, 2.0])
+    validate_log.add_argument("--train-fraction", type=float, default=0.6)
+    validate_log.add_argument("--min-period", type=float, default=2.0)
+    validate_log.add_argument("--max-period", type=float, default=60.0)
+    validate_log.add_argument("--frequency-count", type=int, default=256)
+    validate_log.add_argument("--surrogates", type=int, default=199)
+    validate_log.add_argument("--fdr", type=float, default=0.01)
+    validate_log.add_argument("--groups-per-host-day", type=float)
+    validate_log.add_argument("--seed", type=int, default=42)
+    validate_log.add_argument("--output", type=Path, help="write the JSON report to this path")
     return parser
 
 
@@ -57,7 +71,7 @@ def main(argv=None) -> int:
                 cluster_gap_seconds=args.cluster_gap_seconds,
                 random_seed=args.seed,
             )
-        else:
+        elif args.command == "validate":
             report = validate_periodicity(
                 trials=args.trials,
                 event_count=args.events,
@@ -70,6 +84,19 @@ def main(argv=None) -> int:
                 calibration_method=args.calibration_method,
                 cluster_gap_seconds=args.cluster_gap_seconds,
                 surrogate_count=args.surrogates,
+                groups_per_host_day=args.groups_per_host_day,
+                seed=args.seed,
+            )
+        else:
+            report = validate_benign_events(
+                read_events(args.input),
+                candidate_gaps=args.candidate_gaps,
+                train_fraction=args.train_fraction,
+                min_period=args.min_period,
+                max_period=args.max_period,
+                frequency_count=args.frequency_count,
+                surrogate_count=args.surrogates,
+                fdr=args.fdr,
                 groups_per_host_day=args.groups_per_host_day,
                 seed=args.seed,
             )
