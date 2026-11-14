@@ -28,6 +28,10 @@ class AnalysisTests(unittest.TestCase):
         self.assertEqual(report["groups"], [])
         self.assertEqual(report["alerts"], [])
 
+    def test_empty_input_still_validates_frequency_count(self):
+        with self.assertRaisesRegex(ValueError, "100000"):
+            analyze_events([], frequency_count=100_001)
+
 
 if __name__ == "__main__":
     unittest.main()

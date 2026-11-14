@@ -5,7 +5,7 @@ import numpy as np
 
 from .features import spectral_features
 from .models import Event
-from .periodicity import benjamini_hochberg, rayleigh_scan
+from .periodicity import MAX_FREQUENCY_COUNT, benjamini_hochberg, rayleigh_scan
 
 
 def analyze_events(
@@ -21,6 +21,8 @@ def analyze_events(
         raise ValueError("bin_seconds must be finite and positive")
     if not math.isfinite(fdr) or not 0.0 < fdr <= 1.0:
         raise ValueError("fdr must be between 0 and 1")
+    if type(frequency_count) is not int or not 2 <= frequency_count <= MAX_FREQUENCY_COUNT:
+        raise ValueError(f"frequency_count must be between 2 and {MAX_FREQUENCY_COUNT}")
 
     grouped = defaultdict(list)
     event_count = 0

@@ -19,6 +19,16 @@ class PeriodicityTests(unittest.TestCase):
         self.assertIsNone(rayleigh_scan([1.0, 1.0, 1.0, 1.0], 1.0, 2.0))
         self.assertIsNone(rayleigh_scan([1.0, 2.0, 3.0], 1.0, 2.0))
 
+    def test_frequency_count_can_exceed_previous_limit(self):
+        result = rayleigh_scan([0.0, 1.0, 2.0, 3.0], 1.0, 2.0, frequency_count=10_001)
+
+        self.assertIsNotNone(result)
+        self.assertEqual(result.tested_frequencies, 10_001)
+
+    def test_frequency_count_remains_bounded(self):
+        with self.assertRaisesRegex(ValueError, "100000"):
+            rayleigh_scan([0.0, 1.0, 2.0, 3.0], 1.0, 2.0, frequency_count=100_001)
+
     def test_benjamini_hochberg_preserves_order_and_monotonicity(self):
         adjusted = benjamini_hochberg([0.04, 0.001, 0.02, 0.5])
 

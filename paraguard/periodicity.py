@@ -4,6 +4,9 @@ import math
 import numpy as np
 
 
+MAX_FREQUENCY_COUNT = 100_000
+
+
 @dataclass(frozen=True)
 class PeriodicityResult:
     event_count: int
@@ -25,8 +28,8 @@ def rayleigh_scan(
         raise ValueError("period bounds must be finite")
     if min_period <= 0 or max_period <= min_period:
         raise ValueError("period bounds must satisfy 0 < min_period < max_period")
-    if type(frequency_count) is not int or not 2 <= frequency_count <= 10000:
-        raise ValueError("frequency_count must be between 2 and 10000")
+    if type(frequency_count) is not int or not 2 <= frequency_count <= MAX_FREQUENCY_COUNT:
+        raise ValueError(f"frequency_count must be between 2 and {MAX_FREQUENCY_COUNT}")
 
     times = np.asarray(timestamps, dtype=np.float64)
     if times.ndim != 1 or not np.all(np.isfinite(times)):

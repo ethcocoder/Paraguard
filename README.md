@@ -26,6 +26,8 @@ paraguard scan events.jsonl --min-period 2 --max-period 300 --fdr 0.01 --output 
 
 Use `python -m paraguard scan events.csv` when running from a source checkout. The report includes per-process/channel features, periodicity statistics, adjusted q-values, and plain-language explanations.
 
+`--frequency-count` controls the period-grid resolution (default `256`, maximum `100000`). Larger scans can take substantially longer as event volume grows.
+
 ## Limitations
 
 The Rayleigh p-value is an asymptotic approximation and may be miscalibrated for bursty or dependent event times. This prototype has no context-conditioned benign baseline, allowlist, cross-channel coherence, family classifier, or public-dataset evaluation. No detection-performance claims are made. Consult `docs/spec` for the source design notes and planned validation work.
