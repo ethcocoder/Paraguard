@@ -44,6 +44,8 @@ def _build_parser() -> argparse.ArgumentParser:
     validate_log.add_argument("input", type=Path, help="benign .csv, .jsonl, or .ndjson event file")
     validate_log.add_argument("--candidate-gaps", type=float, nargs="+", default=[0.5, 1.0, 1.5, 2.0])
     validate_log.add_argument("--train-fraction", type=float, default=0.6)
+    validate_log.add_argument("--folds", type=int, default=1,
+                              help="walk-forward folds after the initial training prefix")
     validate_log.add_argument("--min-period", type=float, default=2.0)
     validate_log.add_argument("--max-period", type=float, default=60.0)
     validate_log.add_argument("--frequency-count", type=int, default=256)
@@ -92,6 +94,7 @@ def main(argv=None) -> int:
                 read_events(args.input),
                 candidate_gaps=args.candidate_gaps,
                 train_fraction=args.train_fraction,
+                folds=args.folds,
                 min_period=args.min_period,
                 max_period=args.max_period,
                 frequency_count=args.frequency_count,

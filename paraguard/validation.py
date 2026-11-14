@@ -186,6 +186,7 @@ def validate_benign_events(
     *,
     candidate_gaps=(0.5, 1.0, 1.5, 2.0),
     train_fraction: float = 0.6,
+    folds: int = 1,
     min_period: float = 2.0,
     max_period: float = 60.0,
     frequency_count: int = 256,
@@ -201,6 +202,8 @@ def validate_benign_events(
         raise ValueError("candidate_gaps must be unique")
     if not math.isfinite(train_fraction) or not 0.5 <= train_fraction <= 0.9:
         raise ValueError("train_fraction must be between 0.5 and 0.9")
+    if type(folds) is not int or not 1 <= folds <= 10:
+        raise ValueError("folds must be between 1 and 10")
     if not math.isfinite(min_period) or not math.isfinite(max_period):
         raise ValueError("period bounds must be finite")
     if min_period <= 0 or max_period <= min_period:
@@ -223,6 +226,21 @@ def validate_benign_events(
         if not isinstance(event, Event):
             raise TypeError("events must contain Event objects")
         grouped[(event.process_id, event.channel)].append(event.timestamp)
+
+    if folds > 1:
+        return _validate_benign_events_walk_forward(
+            grouped,
+            gaps=gaps,
+            train_fraction=train_fraction,
+            folds=folds,
+            min_period=min_period,
+            max_period=max_period,
+            frequency_count=frequency_count,
+            surrogate_count=surrogate_count,
+            fdr=fdr,
+            groups_per_host_day=groups_per_host_day,
+            seed=seed,
+        )
 
     split_groups = []
     skipped_groups = 0
@@ -349,5 +367,203 @@ def validate_benign_events(
             "The selected gap is tuned on the chronological training segment and evaluated once on the held-out segment.",
             "The estimate is per process-channel group; host identifiers and fleet-level dependencies are not modeled.",
             "One held-out interval does not establish stability across seasons, software changes, or hosts.",
+        ],
+    }
+
+
+def _validate_benign_events_walk_forward(
+    grouped,
+    *,
+    gaps,
+    train_fraction,
+    folds,
+    min_period,
+    max_period,
+    frequency_count,
+    surrogate_count,
+    fdr,
+    groups_per_host_day,
+    seed,
+) -> dict:
+    total_events = sum(len(times) for times in grouped.values())
+    estimated_work = (
+        total_events
+        * folds
+        * (len(gaps) + 1)
+        * (surrogate_count + 1)
+        * frequency_count
+    )
+    if estimated_work > MAX_VALIDATION_PHASE_EVALUATIONS:
+        raise ValueError(
+            "walk-forward validation exceeds the work limit; reduce folds, gaps, surrogates, or frequency_count"
+        )
+
+    fold_results = []
+    evaluated_group_keys = set()
+    skipped_group_folds = 0
+    total_training_events = 0
+    total_heldout_events = 0
+    all_heldout_rows = []
+
+    def score(groups, segment_name, gap, fold_index, gap_index):
+        rows = []
+        p_values = []
+        for group_index, group in enumerate(groups):
+            result = empirical_cluster_test(
+                group[segment_name],
+                min_period,
+                max_period,
+                frequency_count=frequency_count,
+                cluster_gap_seconds=gap,
+                surrogate_count=surrogate_count,
+                seed=seed + fold_index * 10_000_019 + gap_index * 1_000_003 + group_index,
+            )
+            p_value = result.p_value if result is not None else 1.0
+            p_values.append(p_value)
+            rows.append({
+                "process_id": group["process_id"],
+                "channel": group["channel"],
+                "event_count": int(len(group[segment_name])),
+                "p_value": p_value,
+                "cluster_count": result.cluster_count if result is not None else 0,
+            })
+        q_values = benjamini_hochberg(p_values)
+        for row, q_value in zip(rows, q_values):
+            row["q_value"] = q_value
+            row["alert"] = q_value <= fdr
+        return rows
+
+    for fold_index in range(folds):
+        fold_groups = []
+        for (process_id, channel), raw_times in sorted(grouped.items()):
+            times = np.sort(np.asarray(raw_times, dtype=np.float64))
+            initial_train_end = int(len(times) * train_fraction)
+            remaining = len(times) - initial_train_end
+            start = initial_train_end + remaining * fold_index // folds
+            end = initial_train_end + remaining * (fold_index + 1) // folds
+            training_times = times[:start]
+            heldout_times = times[start:end]
+            if (
+                len(training_times) < 4
+                or len(heldout_times) < 4
+                or training_times[-1] <= training_times[0]
+                or heldout_times[-1] <= heldout_times[0]
+            ):
+                skipped_group_folds += 1
+                continue
+            fold_groups.append({
+                "process_id": process_id,
+                "channel": channel,
+                "training_times": training_times,
+                "heldout_times": heldout_times,
+            })
+            evaluated_group_keys.add((process_id, channel))
+
+        if not fold_groups:
+            continue
+
+        training_candidates = []
+        for gap_index, gap in enumerate(gaps):
+            training_rows = score(
+                fold_groups, "training_times", gap, fold_index, gap_index
+            )
+            alerts = sum(row["alert"] for row in training_rows)
+            training_candidates.append({
+                "cluster_gap_seconds": gap,
+                "training_alerts": int(alerts),
+                "training_group_count": len(training_rows),
+                "training_alert_rate": alerts / len(training_rows),
+            })
+        selected_index = min(
+            range(len(training_candidates)),
+            key=lambda index: (
+                abs(training_candidates[index]["training_alert_rate"] - fdr),
+                training_candidates[index]["cluster_gap_seconds"],
+            ),
+        )
+        selected_gap = training_candidates[selected_index]["cluster_gap_seconds"]
+        heldout_rows = score(
+            fold_groups,
+            "heldout_times",
+            selected_gap,
+            fold_index,
+            selected_index + len(gaps),
+        )
+        alert_count = sum(row["alert"] for row in heldout_rows)
+        group_count = len(heldout_rows)
+        interval = _wilson_interval(alert_count, group_count)
+        training_count = sum(len(group["training_times"]) for group in fold_groups)
+        heldout_count = sum(len(group["heldout_times"]) for group in fold_groups)
+        total_training_events += training_count
+        total_heldout_events += heldout_count
+        all_heldout_rows.extend(heldout_rows)
+        fold_results.append({
+            "fold": fold_index + 1,
+            "training_event_count": int(training_count),
+            "heldout_event_count": int(heldout_count),
+            "group_count": group_count,
+            "selected_cluster_gap_seconds": selected_gap,
+            "training_gap_selection": training_candidates,
+            "heldout": {
+                "alert_count": int(alert_count),
+                "group_count": group_count,
+                "alert_rate": alert_count / group_count,
+                "wilson_95_interval": [interval[0], interval[1]],
+                "groups": heldout_rows,
+            },
+        })
+
+    if not fold_results:
+        raise ValueError("no walk-forward folds have enough distinct events for both train and held-out periods")
+
+    total_alerts = sum(row["alert"] for row in all_heldout_rows)
+    total_groups = len(all_heldout_rows)
+    pooled_interval = _wilson_interval(total_alerts, total_groups)
+    pooled_rate = total_alerts / total_groups
+    return {
+        "validation_version": 1,
+        "status": "evaluated",
+        "data_source": "user-supplied benign event log",
+        "split_method": "walk-forward chronological within each process-channel group",
+        "configuration": {
+            "train_fraction": train_fraction,
+            "folds_requested": folds,
+            "folds_evaluated": len(fold_results),
+            "candidate_gaps_seconds": list(gaps),
+            "selected_cluster_gaps_seconds": [
+                fold["selected_cluster_gap_seconds"] for fold in fold_results
+            ],
+            "min_period": min_period,
+            "max_period": max_period,
+            "frequency_count": frequency_count,
+            "surrogate_count": surrogate_count,
+            "fdr": fdr,
+            "groups_per_host_day": groups_per_host_day,
+            "seed": seed,
+        },
+        "group_counts": {
+            "total_input_groups": len(grouped),
+            "evaluated_groups": len(evaluated_group_keys),
+            "skipped_group_folds": skipped_group_folds,
+        },
+        "split_event_counts": {
+            "training": int(total_training_events),
+            "heldout": int(total_heldout_events),
+        },
+        "fold_results": fold_results,
+        "heldout": {
+            "alert_count": int(total_alerts),
+            "group_fold_count": total_groups,
+            "alert_rate": pooled_rate,
+            "wilson_95_interval": [pooled_interval[0], pooled_interval[1]],
+            "estimated_false_alerts_per_host_day": (
+                pooled_rate * groups_per_host_day if groups_per_host_day is not None else None
+            ),
+        },
+        "limitations": [
+            "The input is treated as benign; mislabeled or mixed telemetry invalidates the false-alert interpretation.",
+            "Each fold tunes the cluster gap only on its earlier chronological prefix.",
+            "Pooled intervals are descriptive because held-out folds from the same process-channel group are dependent.",
+            "The estimate is per process-channel group; host IDs and cross-host dependence are unavailable in the current schema.",
         ],
     }

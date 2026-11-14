@@ -57,7 +57,7 @@ The report includes false-positive rates with Wilson 95% intervals and, when `--
 Use a representative log that is known to be benign. Paraguard splits each process-channel series chronologically, selects the gap whose training alert rate is closest to the target FDR, then evaluates that fixed gap on the held-out segment:
 
 ```powershell
-paraguard validate-log benign_events.jsonl --train-fraction 0.6 --candidate-gaps 0.5 1 1.5 2 --surrogates 199 --fdr 0.01 --output heldout.json
+paraguard validate-log benign_events.jsonl --train-fraction 0.6 --folds 3 --candidate-gaps 0.5 1 1.5 2 --surrogates 199 --fdr 0.01 --output heldout.json
 ```
 
-The report includes the selected gap, training candidate rates, held-out alert rate and Wilson interval, and exact train/held-out event counts. Groups with fewer than four timestamps on either side or no timestamp spread are skipped; validation fails if no groups remain. This is an offline per-process/channel estimate: the input is assumed benign, host IDs and cross-host dependence are unavailable in the current schema, and one held-out period does not establish long-term calibration.
+With `--folds 3`, each fold expands its training prefix and tests the next non-overlapping time window; the gap is selected independently using only that fold's training data. The report includes per-fold and pooled held-out rates and Wilson intervals, selected gaps, and exact train/held-out event counts. Groups with fewer than four timestamps on either side or no timestamp spread are skipped; validation fails if no groups remain. This is an offline per-process/channel estimate: the input is assumed benign, host IDs and cross-host dependence are unavailable in the current schema, and walk-forward folds from one process-channel group are dependent, so pooled intervals are descriptive rather than independent-sample guarantees.

@@ -55,6 +55,34 @@ class ValidationTests(unittest.TestCase):
                          second["configuration"]["selected_cluster_gap_seconds"])
         self.assertEqual(first["heldout"]["group_count"], 3)
 
+    def test_walk_forward_folds_expand_training_and_hold_out_disjoint_windows(self):
+        events = [
+            Event(float(timestamp), f"process-{group}", "network")
+            for group in range(2)
+            for timestamp in range(0, 300, 5)
+        ]
+
+        report = validate_benign_events(
+            events,
+            candidate_gaps=(0.5, 1.5),
+            train_fraction=0.6,
+            folds=3,
+            min_period=2.0,
+            max_period=60.0,
+            frequency_count=64,
+            surrogate_count=39,
+            fdr=0.05,
+            seed=21,
+        )
+
+        self.assertEqual(report["configuration"]["folds_evaluated"], 3)
+        training_counts = [fold["training_event_count"] for fold in report["fold_results"]]
+        heldout_counts = [fold["heldout_event_count"] for fold in report["fold_results"]]
+        self.assertEqual(training_counts, sorted(training_counts))
+        self.assertTrue(all(count > 0 for count in heldout_counts))
+        self.assertEqual(sum(heldout_counts), 48)
+        self.assertEqual(report["heldout"]["group_fold_count"], 6)
+
     def test_validation_rejects_excessive_work(self):
         with self.assertRaisesRegex(ValueError, "work limit"):
             validate_periodicity(trials=1000, event_count=1000, frequency_count=1000)

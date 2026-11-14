@@ -91,6 +91,31 @@ class CliTests(unittest.TestCase):
         self.assertEqual(report["split_method"], "chronological within each process-channel group")
         self.assertEqual(report["split_event_counts"], {"training": 48, "heldout": 32})
 
+    def test_validate_log_accepts_walk_forward_folds(self):
+        with tempfile.TemporaryDirectory() as directory:
+            input_path = Path(directory) / "benign.jsonl"
+            output_path = Path(directory) / "walk-forward.json"
+            records = [
+                json.dumps({"timestamp": timestamp, "process_id": f"p{group}", "channel": "network"})
+                for group in range(2)
+                for timestamp in range(0, 300, 5)
+            ]
+            input_path.write_text("\n".join(records) + "\n", encoding="utf-8")
+
+            exit_code = main([
+                "validate-log", str(input_path),
+                "--candidate-gaps", "0.5", "1.5",
+                "--train-fraction", "0.6", "--folds", "3",
+                "--min-period", "2", "--max-period", "60",
+                "--frequency-count", "64", "--surrogates", "39",
+                "--fdr", "0.05", "--output", str(output_path),
+            ])
+            report = json.loads(output_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(report["configuration"]["folds_evaluated"], 3)
+        self.assertEqual(report["split_method"], "walk-forward chronological within each process-channel group")
+
 
 if __name__ == "__main__":
     unittest.main()
