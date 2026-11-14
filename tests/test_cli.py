@@ -9,6 +9,25 @@ from paraguard.cli import main
 
 
 class CliTests(unittest.TestCase):
+    def test_validate_returns_failure_and_writes_calibration_report(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output_path = Path(directory) / "validation.json"
+
+            exit_code = main([
+                "validate",
+                "--trials", "40",
+                "--events", "20",
+                "--alpha", "0.05",
+                "--frequency-count", "128",
+                "--groups-per-host-day", "1000",
+                "--output", str(output_path),
+            ])
+            report = json.loads(output_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(report["status"], "failed")
+        self.assertGreater(report["bursty_null"]["false_positive_rate"], 0.5)
+
     def test_scan_writes_a_json_report(self):
         with tempfile.TemporaryDirectory() as directory:
             input_path = Path(directory) / "events.jsonl"
